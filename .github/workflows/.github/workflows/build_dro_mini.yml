@@ -1,0 +1,91 @@
+name: Build DRO Marauder Mini
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download official v1.17.0 source
+        run: |
+          curl -L --fail -o marauder.zip https://github.com/justcallmekoko/ESP32Marauder/archive/refs/tags/v1.17.0.zip
+          unzip -q marauder.zip
+          mv ESP32Marauder-1.17.0 marauder
+
+      - name: Unpack DRO modifications
+        run: |
+          unzip -q DRO_Marauder_v1.17.0_modified_files.zip -d dro_mods
+          cp dro_mods/custom/MenuFunctions.cpp marauder/esp32_marauder/MenuFunctions.cpp
+          cp dro_mods/custom/MenuFunctions.h marauder/esp32_marauder/MenuFunctions.h
+          cp dro_mods/custom/Display.cpp marauder/esp32_marauder/Display.cpp
+
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://github.com/espressif/arduino-esp32/releases/download/3.3.4/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.4
+
+      - name: Install dependencies
+        working-directory: marauder
+        run: |
+          git clone --depth 1 --branch 1.6 https://github.com/marian-craciunescu/ESP32Ping CustomESP32Ping
+          git clone --depth 1 --branch v3.4.8 https://github.com/ESP32Async/AsyncTCP CustomAsyncTCP
+          git clone --depth 1 --branch v2.0.6 https://github.com/stevemarple/MicroNMEA CustomMicroNMEA
+          git clone --depth 1 --branch v3.8.1 https://github.com/ESP32Async/ESPAsyncWebServer CustomESPAsyncWebServer
+          git clone --depth 1 --branch V2.5.34 https://github.com/Bodmer/TFT_eSPI CustomTFT_eSPI
+          git clone --depth 1 --branch v1.4 https://github.com/PaulStoffregen/XPT2046_Touchscreen CustomXPT2046_Touchscreen
+          git clone --depth 1 --branch 3.0.0 https://github.com/lvgl/lv_arduino Customlv_arduino
+          git clone --depth 1 --branch 1.8.0 https://github.com/Bodmer/JPEGDecoder CustomJPEGDecoder
+          git clone --depth 1 --branch 2.3.8 https://github.com/h2zero/NimBLE-Arduino CustomNIMBLE-Arduino
+          git clone --depth 1 --branch 1.12.0 https://github.com/adafruit/Adafruit_NeoPixel CustomAdafruit_NeoPixel
+          git clone --depth 1 --branch v6.18.2 https://github.com/bblanchon/ArduinoJson CustomArduinoJson
+          git clone --depth 1 --branch v1.3.3 https://github.com/ivanseidel/LinkedList CustomLinkedList
+          git clone --depth 1 --branch 8.1.0 https://github.com/plerup/espsoftwareserial CustomEspSoftwareSerial
+          git clone --depth 1 --branch 1.15.0 https://github.com/adafruit/Adafruit_BusIO CustomAdafruit_BusIO
+          git clone --depth 1 --branch 1.0.2 https://github.com/adafruit/Adafruit_MAX1704X CustomAdafruit_MAX1704X
+          cp -r libraries/Adafruit_TCA8418 CustomAdafruit_TCA8418
+
+      - name: Configure TFT_eSPI
+        working-directory: marauder
+        run: |
+          rm -f CustomTFT_eSPI/User_Setup_Select.h
+          cp User*.h CustomTFT_eSPI/
+          sed -i 's|^//#include <User_Setup_marauder_mini.h>|#include <User_Setup_marauder_mini.h>|' CustomTFT_eSPI/User_Setup_Select.h
+
+      - name: Build Mini firmware
+        working-directory: marauder
+        run: |
+          mkdir -p build
+          arduino-cli compile \
+            --fqbn 'esp32:esp32:d32:PartitionScheme=min_spiffs' \
+            --libraries "$PWD" \
+            --build-path "$PWD/build" \
+            --warnings none \
+            --build-property 'compiler.cpp.extra_flags=-DMARAUDER_MINI' \
+            esp32_marauder/esp32_marauder.ino
+
+      - name: Package BIN
+        working-directory: marauder
+        run: |
+          mkdir -p ../dist
+          cp build/esp32_marauder.ino.bin ../dist/esp32_marauder_mini_DRO.bin
+          sha256sum ../dist/esp32_marauder_mini_DRO.bin > ../dist/SHA256SUMS.txt
+
+      - name: Upload BIN
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRO-Marauder-Mini-v1.17.0
+          path: dist/
